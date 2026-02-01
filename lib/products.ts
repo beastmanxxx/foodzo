@@ -1,5 +1,3 @@
-import type { ObjectId } from "mongodb";
-
 export const PRODUCTS_COLLECTION = "products";
 export const DELIVERY_TIME_UNITS = ["minutes", "hours", "days"] as const;
 export type DeliveryTimeUnit = (typeof DELIVERY_TIME_UNITS)[number];
@@ -16,8 +14,9 @@ export type ProductDocument = {
   };
   imageUrl: string;
   imagePublicId: string;
-  createdAt: Date;
-  updatedAt: Date;
+  categoryIds?: string[];
+  createdAt: string | Date;
+  updatedAt: string | Date;
 };
 
 const MIN_NAME_LENGTH = 3;
@@ -43,15 +42,29 @@ export type ProductResponse = {
     unit: DeliveryTimeUnit;
   };
   imageUrl: string;
+  categoryIds: string[];
   createdAt: string;
   updatedAt: string;
 };
 
-export function serializeProduct(
-  doc: ProductDocument & { _id: ObjectId }
-): ProductResponse {
+function ensureIsoString(value: unknown): string {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? new Date().toISOString() : value.toISOString();
+  }
+
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString();
+    }
+  }
+
+  return new Date().toISOString();
+}
+
+export function serializeProduct(id: string, doc: ProductDocument): ProductResponse {
   return {
-    id: doc._id.toString(),
+    id,
     name: doc.name,
     description: doc.description,
     price: doc.price,
@@ -62,8 +75,11 @@ export function serializeProduct(
       unit: doc.deliveryTime.unit,
     },
     imageUrl: doc.imageUrl,
-    createdAt: doc.createdAt.toISOString(),
-    updatedAt: doc.updatedAt.toISOString(),
+    categoryIds: Array.isArray(doc.categoryIds)
+      ? doc.categoryIds.filter((value) => typeof value === "string" && value.trim().length > 0)
+      : [],
+    createdAt: ensureIsoString(doc.createdAt),
+    updatedAt: ensureIsoString(doc.updatedAt),
   };
 }
 
@@ -84,6 +100,7 @@ type ProductValidationSuccess = {
       value: number;
       unit: DeliveryTimeUnit;
     };
+    categoryIds: string[];
   };
 };
 
@@ -195,6 +212,12 @@ export function validateProductFormData(formData: FormData): ProductValidationRe
       return { success: false, error: "Invalid delivery time unit." };
     }
 
+    const rawCategoryIds = formData.getAll("categoryIds");
+    const categoryIds = rawCategoryIds
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
+
     return {
       success: true,
       data: {
@@ -207,6 +230,7 @@ export function validateProductFormData(formData: FormData): ProductValidationRe
           value: deliveryValue,
           unit: deliveryUnit as DeliveryTimeUnit,
         },
+        categoryIds,
       },
     };
   } catch (error) {

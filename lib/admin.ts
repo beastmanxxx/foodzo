@@ -1,5 +1,7 @@
+import { collection, getDocs, limit, query, where } from "firebase/firestore/lite";
+
 import { NORMALIZED_ADMIN_PHONE } from "./constants";
-import { getDb } from "./mongodb";
+import { getFirestoreDb } from "./firebase";
 
 export async function getAuthorizedAdminPhone(request: Request): Promise<string | null> {
   const adminHeader = request.headers.get("x-admin-phone");
@@ -16,12 +18,15 @@ export async function getAuthorizedAdminPhone(request: Request): Promise<string 
     return normalizedHeader;
   }
 
-  const db = await getDb();
-  const usersCollection = db.collection("users");
-  const adminUser = await usersCollection.findOne({
-    phoneNormalized: normalizedHeader,
-    isAdmin: true,
-  });
+  const db = getFirestoreDb();
+  const usersCollection = collection(db, "users");
+  const adminQuery = query(
+    usersCollection,
+    where("phoneNormalized", "==", normalizedHeader),
+    where("isAdmin", "==", true),
+    limit(1)
+  );
+  const snapshot = await getDocs(adminQuery);
 
-  return adminUser ? normalizedHeader : null;
+  return snapshot.empty ? null : normalizedHeader;
 }

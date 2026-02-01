@@ -8,7 +8,7 @@ import { formatPrice } from "@/lib/currency";
 import { type ProductResponse } from "@/lib/products";
 
 const mainWrapperClasses =
-  "relative z-40 -mt-[14px] flex-1 space-y-6 rounded-t-[25px] bg-[#fff6e5] px-5 pb-20 pt-10 shadow-[0_-18px_36px_rgba(215,120,10,0.12)]";
+  "relative z-40 -mt-[14px] flex-1 space-y-6 rounded-t-[16px] bg-[#fff6e5] px-5 pb-20 pt-10 shadow-[0_-18px_36px_rgba(215,120,10,0.12)]";
 
 const formatDeliveryTimeLabel = (delivery: ProductResponse["deliveryTime"]) => {
   const baseUnit = delivery.unit.endsWith("s")
@@ -88,14 +88,14 @@ export default function SearchPage() {
           }}
         ></div>
 
-        <div className="relative z-10 flex flex-col gap-2 px-5 pt-[clamp(1.5rem,8vw,2.4rem)] text-[#2c1603]">
+        <div className="relative z-10 flex flex-col gap-2 px-5 pb-3 pt-[clamp(1.5rem,8vw,2.4rem)] text-[#2c1603]">
           <div className="flex items-center justify-between rounded-[28px] bg-white px-4 py-3 shadow-[0_18px_36px_rgba(222,137,14,0.25)]">
             <div className="leading-tight">
               <span className="text-xs font-semibold uppercase tracking-[0.26em] text-[#ac6510]">
                 Explore
               </span>
               <h1 className="text-[17px] font-semibold text-[#2c1603]">
-                Search Products
+                Search Dishes
               </h1>
             </div>
             <Link

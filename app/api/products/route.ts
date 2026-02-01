@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { ObjectId } from "mongodb";
+import { collection, getDocs, limit, orderBy, query } from "firebase/firestore/lite";
 
-import { getDb } from "@/lib/mongodb";
+import { getFirestoreDb } from "@/lib/firebase";
 import {
   PRODUCTS_COLLECTION,
   ProductDocument,
@@ -11,17 +11,22 @@ import {
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const db = await getDb();
-  const productsCollection = db.collection<ProductDocument>(PRODUCTS_COLLECTION);
+  try {
+    const db = getFirestoreDb();
+    const productsCollection = collection(db, PRODUCTS_COLLECTION);
+    const productsQuery = query(productsCollection, orderBy("createdAt", "desc"), limit(200));
+    const snapshot = await getDocs(productsQuery);
 
-  const products = await productsCollection
-    .find({}, { sort: { createdAt: -1 } })
-    .limit(200)
-    .toArray();
+    const products = snapshot.docs.map((docSnap) =>
+      serializeProduct(docSnap.id, docSnap.data() as ProductDocument)
+    );
 
-  return NextResponse.json({
-    products: products.map((product) =>
-      serializeProduct(product as ProductDocument & { _id: ObjectId })
-    ),
-  });
+    return NextResponse.json({ products });
+  } catch (error) {
+    console.error("Failed to load products", error);
+    return NextResponse.json(
+      { error: "Failed to load products. Please try again later." },
+      { status: 500 }
+    );
+  }
 }

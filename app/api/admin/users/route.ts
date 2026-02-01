@@ -1,9 +1,26 @@
 import { NextResponse } from "next/server";
+import {
+  collection,
+  getDocs,
+  limit,
+  orderBy,
+  query,
+  updateDoc,
+  where,
+} from "firebase/firestore/lite";
 
 import { getAuthorizedAdminPhone } from "@/lib/admin";
-import { getDb } from "@/lib/mongodb";
+import { getFirestoreDb } from "@/lib/firebase";
 
 const USERS_COLLECTION = "users";
+
+type UserDocument = {
+  username: string;
+  email: string;
+  phone: string;
+  phoneNormalized: string;
+  isAdmin?: boolean;
+};
 
 export async function GET(request: Request) {
   const adminPhone = await getAuthorizedAdminPhone(request);
@@ -12,23 +29,30 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const db = await getDb();
-  const usersCollection = db.collection(USERS_COLLECTION);
+  try {
+    const db = getFirestoreDb();
+    const usersCollection = collection(db, USERS_COLLECTION);
+    const snapshot = await getDocs(
+      query(usersCollection, orderBy("createdAt", "desc"), limit(200))
+    );
 
-  const users = await usersCollection
-    .find({}, { projection: { passwordHash: 0 } })
-    .sort({ createdAt: -1 })
-    .limit(200)
-    .toArray();
+    const users = snapshot.docs.map((docSnap) => docSnap.data() as UserDocument);
 
-  return NextResponse.json({
-    users: users.map((user) => ({
-      username: user.username,
-      email: user.email,
-      phone: user.phone,
-      isAdmin: user.isAdmin === true,
-    })),
-  });
+    return NextResponse.json({
+      users: users.map((user) => ({
+        username: user.username,
+        email: user.email,
+        phone: user.phone,
+        isAdmin: user.isAdmin === true,
+      })),
+    });
+  } catch (error) {
+    console.error("Failed to load users", error);
+    return NextResponse.json(
+      { error: "Failed to load users. Please try again later." },
+      { status: 500 }
+    );
+  }
 }
 
 export async function POST(request: Request) {
@@ -61,22 +85,29 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Provide a valid phone number." }, { status: 400 });
   }
 
-  const db = await getDb();
-  const usersCollection = db.collection(USERS_COLLECTION);
+  try {
+    const db = getFirestoreDb();
+    const usersCollection = collection(db, USERS_COLLECTION);
+    const matchSnapshot = await getDocs(
+      query(usersCollection, where("phoneNormalized", "==", normalizedPhone), limit(1))
+    );
 
-  const result = await usersCollection.updateOne(
-    { phoneNormalized: normalizedPhone },
-    {
-      $set: {
-        isAdmin: true,
-        updatedAt: new Date(),
-      },
+    if (matchSnapshot.empty) {
+      return NextResponse.json({ error: "User not found." }, { status: 404 });
     }
-  );
 
-  if (result.matchedCount === 0) {
-    return NextResponse.json({ error: "User not found." }, { status: 404 });
+    const userDoc = matchSnapshot.docs[0];
+    await updateDoc(userDoc.ref, {
+      isAdmin: true,
+      updatedAt: new Date().toISOString(),
+    });
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("Failed to promote user", error);
+    return NextResponse.json(
+      { error: "Failed to promote user. Please try again later." },
+      { status: 500 }
+    );
   }
-
-  return NextResponse.json({ success: true });
 }

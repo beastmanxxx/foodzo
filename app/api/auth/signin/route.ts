@@ -1,17 +1,28 @@
 import { NextResponse } from "next/server";
+import {
+  collection,
+  getDocs,
+  limit,
+  query,
+  where,
+  type CollectionReference,
+} from "firebase/firestore/lite";
 
-import { getDb } from "@/lib/mongodb";
-import { verifyPassword } from "@/lib/password";
+import {
+  FirebaseAuthRestError,
+  signInWithEmailPassword,
+} from "@/lib/firebaseAuth";
+import { getFirestoreDb } from "@/lib/firebase";
 import { validateSigninPayload } from "@/lib/credentials";
 import { NORMALIZED_ADMIN_PHONE } from "@/lib/constants";
 
 type UserDocument = {
+  authUid?: string;
   username: string;
   email: string;
   emailLower: string;
   phone: string;
   phoneNormalized: string;
-  passwordHash: string;
   isAdmin?: boolean;
 };
 
@@ -24,50 +35,118 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: validation.error }, { status: 400 });
     }
 
-    const db = await getDb();
-    const usersCollection = db.collection<UserDocument>("users");
+    const db = getFirestoreDb();
+    const usersCollection = collection(db, "users") as CollectionReference<UserDocument>;
 
-    let existingUser: UserDocument | null = null;
+    let emailForAuth: string | null = null;
+    let preloadedUser: UserDocument | null = null;
 
     if (validation.mode === "email") {
-      existingUser = await usersCollection.findOne({
-        emailLower: validation.normalizedEmail,
-      });
+      emailForAuth = validation.normalizedEmail;
     } else {
-      existingUser = await usersCollection.findOne({
-        phoneNormalized: validation.normalizedPhone,
-      });
+      const phoneSnapshot = await getDocs(
+        query(usersCollection, where("phoneNormalized", "==", validation.normalizedPhone), limit(1))
+      );
+
+      if (phoneSnapshot.empty) {
+        return NextResponse.json(
+          { error: "Invalid credentials." },
+          { status: 401 }
+        );
+      }
+
+      preloadedUser = phoneSnapshot.docs[0].data();
+      emailForAuth = preloadedUser.emailLower;
     }
 
-    if (!existingUser || typeof existingUser.passwordHash !== "string") {
+    if (!emailForAuth) {
       return NextResponse.json(
         { error: "Invalid credentials." },
         { status: 401 }
       );
     }
 
-    const isValidPassword = await verifyPassword(
-      validation.password,
-      existingUser.passwordHash
-    );
+    let authUid: string | null = null;
+    try {
+      const authResponse = await signInWithEmailPassword(emailForAuth, validation.password);
+      authUid = authResponse.localId;
+    } catch (error) {
+      if (error instanceof FirebaseAuthRestError) {
+        const message = error.code;
+        if (message === "INVALID_PASSWORD" || message === "EMAIL_NOT_FOUND") {
+          return NextResponse.json(
+            { error: "Invalid credentials." },
+            { status: 401 }
+          );
+        }
+        if (message === "USER_DISABLED") {
+          return NextResponse.json(
+            { error: "This account has been disabled." },
+            { status: 403 }
+          );
+        }
+        if (message === "TOO_MANY_ATTEMPTS_TRY_LATER") {
+          return NextResponse.json(
+            {
+              error:
+                "Too many failed attempts. Please wait a bit and try again.",
+            },
+            { status: 429 }
+          );
+        }
 
-    if (!isValidPassword) {
+        console.error("Firebase Auth signin error", error);
+        return NextResponse.json(
+          { error: "Unable to sign in at the moment. Please try again later." },
+          { status: 500 }
+        );
+      }
+
+      throw error;
+    }
+
+    let userRecord = preloadedUser;
+
+    if (authUid) {
+      const uidSnapshot = await getDocs(
+        query(usersCollection, where("authUid", "==", authUid), limit(1))
+      );
+
+      if (!uidSnapshot.empty) {
+        userRecord = uidSnapshot.docs[0].data();
+      }
+    }
+
+    if (!userRecord) {
+      const emailSnapshot = await getDocs(
+        query(usersCollection, where("emailLower", "==", emailForAuth), limit(1))
+      );
+
+      if (!emailSnapshot.empty) {
+        userRecord = emailSnapshot.docs[0].data();
+      }
+    }
+
+    if (!userRecord) {
       return NextResponse.json(
-        { error: "Invalid credentials." },
-        { status: 401 }
+        {
+          error:
+            "Account profile is missing. Please contact support before signing in again.",
+        },
+        { status: 500 }
       );
     }
 
-    const documentIsAdmin = existingUser.isAdmin === true;
+    const documentIsAdmin = userRecord.isAdmin === true;
     const isAdmin =
-      documentIsAdmin || existingUser.phoneNormalized === NORMALIZED_ADMIN_PHONE;
+      documentIsAdmin || userRecord.phoneNormalized === NORMALIZED_ADMIN_PHONE;
 
     return NextResponse.json({
       success: true,
       user: {
-        username: existingUser.username,
-        email: existingUser.email,
-        phone: existingUser.phone,
+        username: userRecord.username,
+        email: userRecord.email,
+        phone: userRecord.phone,
         isAdmin,
       },
     });

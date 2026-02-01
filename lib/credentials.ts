@@ -1,11 +1,15 @@
 const USERNAME_REGEX = /^[a-zA-Z0-9_]+$/;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const PHONE_REGEX = /^\+?[0-9]{7,15}$/;
+export const PHONE_REGEX = /^\+?[0-9]{7,15}$/;
 
 const MIN_USERNAME_LENGTH = 3;
 const MAX_USERNAME_LENGTH = 30;
 const MIN_PASSWORD_LENGTH = 6;
 const MAX_PASSWORD_LENGTH = 100;
+
+export function normalizePhoneValue(value: string): string {
+  return value.replace(/[^0-9+]/g, "");
+}
 
 type ValidationFailure = {
   success: false;
@@ -118,7 +122,7 @@ export function validateSignupPayload(payload: unknown): SignupValidationResult 
     };
   }
 
-  const normalizedPhone = trimmedPhone.replace(/[^0-9+]/g, "");
+  const normalizedPhone = normalizePhoneValue(trimmedPhone);
 
   return {
     success: true,
@@ -171,7 +175,7 @@ export function validateSigninPayload(payload: unknown): SigninValidationResult 
     };
   }
 
-  const normalizedPhone = trimmedIdentifier.replace(/[^0-9+]/g, "");
+  const normalizedPhone = normalizePhoneValue(trimmedIdentifier);
   if (PHONE_REGEX.test(normalizedPhone)) {
     return {
       success: true,

@@ -1,25 +1,18 @@
-import { NextResponse } from "next/server";
 import { Buffer } from "node:buffer";
-import {
-  addDoc,
-  collection,
-  getDocs,
-  getDoc,
-  limit,
-  orderBy,
-  query,
-} from "firebase/firestore/lite";
+
+import { NextResponse } from "next/server";
+import { addDoc, collection, getDocs, getDoc, limit, orderBy, query } from "firebase/firestore/lite";
 
 import { getAuthorizedAdminPhone } from "@/lib/admin";
+import {
+  CATEGORIES_COLLECTION,
+  type CategoryDocument,
+  serializeCategory,
+  validateCategoryFormData,
+} from "@/lib/categories";
 import { getCloudinaryClient } from "@/lib/cloudinary";
 import { getFirestoreDb } from "@/lib/firebase";
-import {
-  PRODUCTS_COLLECTION,
-  ProductDocument,
-  serializeProduct,
-  validateProductFormData,
-} from "@/lib/products";
-import { syncProductCategoryLinks } from "@/lib/categoryProductLinks";
+import { syncCategoryProductLinks } from "@/lib/categoryProductLinks";
 
 export const dynamic = "force-dynamic";
 
@@ -32,20 +25,20 @@ export async function GET(request: Request) {
 
   try {
     const db = getFirestoreDb();
-    const productsCollection = collection(db, PRODUCTS_COLLECTION);
-    const productsSnapshot = await getDocs(
-      query(productsCollection, orderBy("createdAt", "desc"), limit(200))
+    const categoriesCollection = collection(db, CATEGORIES_COLLECTION);
+    const snapshot = await getDocs(
+      query(categoriesCollection, orderBy("createdAt", "desc"), limit(200))
     );
 
-    const products = productsSnapshot.docs.map((docSnap) =>
-      serializeProduct(docSnap.id, docSnap.data() as ProductDocument)
+    const categories = snapshot.docs.map((docSnap) =>
+      serializeCategory(docSnap.id, docSnap.data() as CategoryDocument)
     );
 
-    return NextResponse.json({ products });
+    return NextResponse.json({ categories });
   } catch (error) {
-    console.error("Failed to load products", error);
+    console.error("Failed to load categories", error);
     return NextResponse.json(
-      { error: "Failed to load products. Please try again later." },
+      { error: "Failed to load categories. Please try again later." },
       { status: 500 }
     );
   }
@@ -65,7 +58,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid form data." }, { status: 400 });
   }
 
-  const validation = validateProductFormData(formData);
+  const validation = validateCategoryFormData(formData);
 
   if (!validation.success) {
     return NextResponse.json({ error: validation.error }, { status: 400 });
@@ -74,7 +67,10 @@ export async function POST(request: Request) {
   const imageFile = formData.get("image");
 
   if (!(imageFile instanceof File) || imageFile.size === 0) {
-    return NextResponse.json({ error: "Product image is required." }, { status: 400 });
+    return NextResponse.json(
+      { error: "Category image is required." },
+      { status: 400 }
+    );
   }
 
   const mimeType = imageFile.type || "application/octet-stream";
@@ -89,7 +85,7 @@ export async function POST(request: Request) {
     const uploadResult = await cloudinary.uploader.upload(
       `data:${mimeType};base64,${base64}`,
       {
-        folder: "foodzo/products",
+        folder: "foodzo/categories",
         resource_type: "image",
       }
     );
@@ -99,54 +95,57 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("Cloudinary upload failed", error);
     return NextResponse.json(
-      { error: "Failed to upload product image. Please try again." },
+      { error: "Failed to upload category image. Please try again." },
       { status: 500 }
     );
   }
 
   const { data } = validation;
 
-  const productDocument: ProductDocument = {
+  const categoryDocument: CategoryDocument = {
     name: data.name,
-    description: data.description,
-    price: data.price,
-    salePrice: data.salePrice,
-    rating: data.rating,
-    deliveryTime: data.deliveryTime,
-    categoryIds: data.categoryIds,
     imageUrl: secureUrl,
     imagePublicId: publicId,
+    productIds: data.productIds,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
 
   try {
     const db = getFirestoreDb();
-    const productsCollection = collection(db, PRODUCTS_COLLECTION);
-    const insertedRef = await addDoc(productsCollection, productDocument);
+    const categoriesCollection = collection(db, CATEGORIES_COLLECTION);
+    const insertedRef = await addDoc(categoriesCollection, categoryDocument);
     const insertedSnapshot = await getDoc(insertedRef);
 
     if (!insertedSnapshot.exists()) {
-      throw new Error("Failed to load inserted product");
+      throw new Error("Failed to retrieve inserted category");
     }
 
-    const productResponse = serializeProduct(
+    const categoryResponse = serializeCategory(
       insertedSnapshot.id,
-      insertedSnapshot.data() as ProductDocument
+      insertedSnapshot.data() as CategoryDocument
     );
 
-    await syncProductCategoryLinks(db, insertedSnapshot.id, data.categoryIds, []);
+    await syncCategoryProductLinks(db, insertedSnapshot.id, data.productIds, []);
 
     return NextResponse.json(
       {
-        product: productResponse,
+        category: categoryResponse,
       },
       { status: 201 }
     );
   } catch (error) {
-    console.error("Failed to save product", error);
+    console.error("Failed to save category", error);
+
+    try {
+      const cloudinary = getCloudinaryClient();
+      await cloudinary.uploader.destroy(publicId);
+    } catch (cleanupError) {
+      console.error("Failed to cleanup uploaded category image", cleanupError);
+    }
+
     return NextResponse.json(
-      { error: "Failed to save product. Please try again later." },
+      { error: "Failed to save category. Please try again later." },
       { status: 500 }
     );
   }
